@@ -4515,14 +4515,14 @@ func TestDirectIngestMDMMacOSSoftwareUpdateID(t *testing.T) {
 	hostUUID := "test-uuid"
 	host := fleet.Host{ID: 1, UUID: hostUUID}
 	var insertedDeviceID string
-	ds.InsertMacOSSoftwareUpdateDeviceIDFunc = func(ctx context.Context, hostUUID, updateDeviceID string) error {
+	ds.InsertAppleSoftwareUpdateDeviceIDFunc = func(ctx context.Context, hostUUID, updateDeviceID string) error {
 		insertedDeviceID = updateDeviceID
 		return nil
 	}
 
 	t.Run("no rows returns with no error", func(t *testing.T) {
 		require.NoError(t, directIngestMDMMacOSSoftwareUpdateID(t.Context(), logger, &host, ds, []map[string]string{}))
-		require.False(t, ds.InsertMacOSSoftwareUpdateDeviceIDFuncInvoked)
+		require.False(t, ds.InsertAppleSoftwareUpdateDeviceIDFuncInvoked)
 	})
 
 	t.Run("empty value return error", func(t *testing.T) {
@@ -4531,7 +4531,7 @@ func TestDirectIngestMDMMacOSSoftwareUpdateID(t *testing.T) {
 		})
 		require.Error(t, err)
 		require.ErrorContains(t, err, "empty software update device ID")
-		require.False(t, ds.InsertMacOSSoftwareUpdateDeviceIDFuncInvoked)
+		require.False(t, ds.InsertAppleSoftwareUpdateDeviceIDFuncInvoked)
 	})
 
 	t.Run("intel mac takes board-id", func(t *testing.T) {
@@ -4540,10 +4540,10 @@ func TestDirectIngestMDMMacOSSoftwareUpdateID(t *testing.T) {
 			{"key": "board-id", "value": "valid-id"},
 		})
 		require.NoError(t, err)
-		require.True(t, ds.InsertMacOSSoftwareUpdateDeviceIDFuncInvoked)
+		require.True(t, ds.InsertAppleSoftwareUpdateDeviceIDFuncInvoked)
 		require.Equal(t, "valid-id", insertedDeviceID)
 
-		ds.InsertMacOSSoftwareUpdateDeviceIDFuncInvoked = false
+		ds.InsertAppleSoftwareUpdateDeviceIDFuncInvoked = false
 		insertedDeviceID = ""
 	})
 
@@ -4554,7 +4554,7 @@ func TestDirectIngestMDMMacOSSoftwareUpdateID(t *testing.T) {
 			{"key": "board-id", "value": "valid-id"},
 		})
 		require.NoError(t, err)
-		require.True(t, ds.InsertMacOSSoftwareUpdateDeviceIDFuncInvoked)
+		require.True(t, ds.InsertAppleSoftwareUpdateDeviceIDFuncInvoked)
 		require.Equal(t, "valid-bridge-model", insertedDeviceID)
 	})
 
@@ -4563,10 +4563,10 @@ func TestDirectIngestMDMMacOSSoftwareUpdateID(t *testing.T) {
 			{"key": "compatible", "value": "Apple Silicon\x00Mac16,7"},
 		})
 		require.NoError(t, err)
-		require.True(t, ds.InsertMacOSSoftwareUpdateDeviceIDFuncInvoked)
+		require.True(t, ds.InsertAppleSoftwareUpdateDeviceIDFuncInvoked)
 		require.Equal(t, "Apple Silicon", insertedDeviceID)
 
-		ds.InsertMacOSSoftwareUpdateDeviceIDFuncInvoked = false
+		ds.InsertAppleSoftwareUpdateDeviceIDFuncInvoked = false
 		insertedDeviceID = ""
 	})
 }
