@@ -54,9 +54,23 @@ const (
 	defaultQueryByNameExpiration       = 1 * time.Second
 	queryResultsCountKey               = "QueryResultsCount:%d"
 	defaultQueryResultsCountExpiration = 1 * time.Second
-	yaraRuleCachePrefix                = "YaraRuleByName:"
-	yaraRuleByNameKey                  = yaraRuleCachePrefix + "%s"
-	defaultYaraRuleByNameExpiration    = 1 * time.Minute
+	// hostLabelIDsKey caches the labels a host is a member of. It is read on the
+	// osquery result log ingestion path to check the label scope of scheduled
+	// queries, so it needs to stay cheap. Label membership itself is only
+	// refreshed when the host reports the results of the label queries (at most
+	// once per detail query interval), so this cache is short-lived relative to
+	// how often the underlying data can change.
+	//
+	// Note that Service.saveResultLogsToQueryReports relies on this to decide
+	// whether to trust reported results, so a host removed from a label may still
+	// get results stored in that label's queries for up to this long. That is an
+	// accepted trade-off: the host keeps the query in its schedule until its next
+	// config refresh anyway, which is a longer window than this.
+	hostLabelIDsKey                 = "HostLabelIDs:host:%d"
+	defaultHostLabelIDsExpiration   = 1 * time.Minute
+	yaraRuleCachePrefix             = "YaraRuleByName:"
+	yaraRuleByNameKey               = yaraRuleCachePrefix + "%s"
+	defaultYaraRuleByNameExpiration = 1 * time.Minute
 	// NOTE: MDM assets are cached using their checksum as well, as it's
 	// important for them to always be fresh if they changed (see cachedi
 	// mplementation below for details)
@@ -129,6 +143,7 @@ type cachedMysql struct {
 	defaultTeamConfigExp    time.Duration
 	queryByNameExp          time.Duration
 	queryResultsCountExp    time.Duration
+	hostLabelIDsExp         time.Duration
 	yaraRuleByNameExp       time.Duration
 	mdmConfigAssetExp       time.Duration
 	fmaNamesByIdentifierExp time.Duration
@@ -184,6 +199,12 @@ func WithQueryResultsCountExpiration(d time.Duration) Option {
 	}
 }
 
+func WithHostLabelIDsExpiration(d time.Duration) Option {
+	return func(o *cachedMysql) {
+		o.hostLabelIDsExp = d
+	}
+}
+
 func WithYaraRuleByNameExpiration(d time.Duration) Option {
 	return func(o *cachedMysql) {
 		o.yaraRuleByNameExp = d
@@ -221,6 +242,7 @@ func New(ds fleet.Datastore, opts ...Option) fleet.Datastore {
 		defaultTeamConfigExp:    defaultDefaultTeamConfigExpiration,
 		queryByNameExp:          defaultQueryByNameExpiration,
 		queryResultsCountExp:    defaultQueryResultsCountExpiration,
+		hostLabelIDsExp:         defaultHostLabelIDsExpiration,
 		yaraRuleByNameExp:       defaultYaraRuleByNameExpiration,
 		mdmConfigAssetExp:       defaultMDMConfigAssetExpiration,
 		fmaNamesByIdentifierExp: defaultFMANamesByIdentifierExpiration,
@@ -438,6 +460,25 @@ func (ds *cachedMysql) ResultCountForQuery(ctx context.Context, queryID uint) (i
 	ds.c.Set(ctx, key, integer(count), ds.queryResultsCountExp)
 
 	return count, nil
+}
+
+func (ds *cachedMysql) HostLabelIDs(ctx context.Context, hostID uint) ([]uint, error) {
+	key := fmt.Sprintf(hostLabelIDsKey, hostID)
+
+	if x, found := ds.c.Get(ctx, key); found {
+		if labelIDs, ok := x.(labelIDList); ok {
+			return labelIDs, nil
+		}
+	}
+
+	labelIDs, err := ds.Datastore.HostLabelIDs(ctx, hostID)
+	if err != nil {
+		return nil, err
+	}
+
+	ds.c.Set(ctx, key, labelIDList(labelIDs), ds.hostLabelIDsExp)
+
+	return labelIDs, nil
 }
 
 func (ds *cachedMysql) GetAllMDMConfigAssetsByName(ctx context.Context, assetNames []fleet.MDMAssetName,

@@ -758,6 +758,56 @@ func TestCachedResultCountForQuery(t *testing.T) {
 	require.True(t, mockedDS.ResultCountForQueryFuncInvoked)
 }
 
+func TestCachedHostLabelIDs(t *testing.T) {
+	t.Parallel()
+
+	mockedDS := new(mock.Store)
+	ds := New(mockedDS, WithHostLabelIDsExpiration(100*time.Millisecond))
+
+	dbLabelIDs := []uint{1, 2}
+	mockedDS.HostLabelIDsFunc = func(ctx context.Context, hostID uint) ([]uint, error) {
+		return dbLabelIDs, nil
+	}
+
+	// first call gets the result from the DB
+	l1, err := ds.HostLabelIDs(context.Background(), 1)
+	require.NoError(t, err)
+	require.Equal(t, dbLabelIDs, l1)
+	require.True(t, mockedDS.HostLabelIDsFuncInvoked)
+	mockedDS.HostLabelIDsFuncInvoked = false
+
+	// change "stored" label membership
+	dbLabelIDs = []uint{1, 3}
+
+	// this call gets it from the cache
+	l2, err := ds.HostLabelIDs(context.Background(), 1)
+	require.NoError(t, err)
+	require.Equal(t, l1, l2) // returns the old cached value
+	require.False(t, mockedDS.HostLabelIDsFuncInvoked)
+
+	// the cache is keyed by host, so another host is not affected
+	l3, err := ds.HostLabelIDs(context.Background(), 2)
+	require.NoError(t, err)
+	require.Equal(t, dbLabelIDs, l3)
+	require.True(t, mockedDS.HostLabelIDsFuncInvoked)
+	mockedDS.HostLabelIDsFuncInvoked = false
+
+	// the cached value is cloned, mutating it doesn't affect the cache
+	l2[0] = 42
+	l4, err := ds.HostLabelIDs(context.Background(), 1)
+	require.NoError(t, err)
+	require.Equal(t, l1, l4)
+	require.False(t, mockedDS.HostLabelIDsFuncInvoked)
+
+	time.Sleep(200 * time.Millisecond)
+
+	// this call gets it from the DB again since the cache expired
+	l5, err := ds.HostLabelIDs(context.Background(), 1)
+	require.NoError(t, err)
+	require.Equal(t, dbLabelIDs, l5)
+	require.True(t, mockedDS.HostLabelIDsFuncInvoked)
+}
+
 func TestGetAllMDMConfigAssetsByName(t *testing.T) {
 	t.Parallel()
 

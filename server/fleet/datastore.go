@@ -337,6 +337,10 @@ type Datastore interface {
 	// requested label names (preserving the caller's casing), not the DB-stored names.
 	HostMembershipForLabels(ctx context.Context, hostID uint, labelNames []string) (map[string]struct{}, error)
 
+	// HostLabelIDs returns the IDs of all the labels the given host is a member of.
+	// The result is cached (see the cached_mysql datastore), so it may be slightly stale.
+	HostLabelIDs(ctx context.Context, hostID uint) ([]uint, error)
+
 	// TODO JUAN: Refactor this to use the Operating System type instead.
 	// HostIDsByOSVersion retrieves the IDs of all host matching osVersion
 	HostIDsByOSVersion(ctx context.Context, osVersion OSVersion, offset int, limit int) ([]uint, error)

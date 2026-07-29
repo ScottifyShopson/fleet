@@ -1741,6 +1741,20 @@ func (ds *Datastore) LabelsSummary(ctx context.Context, filter fleet.TeamFilter)
 	return labelsSummary, nil
 }
 
+// HostLabelIDs returns the IDs of all the labels the given host is a member of.
+func (ds *Datastore) HostLabelIDs(ctx context.Context, hostID uint) ([]uint, error) {
+	// NOTE: this hits the (host_id, label_id) primary key of label_membership,
+	// which makes it cheap enough to be used on the osquery log ingestion path
+	// (it is also cached, see cached_mysql).
+	var labelIDs []uint
+	if err := sqlx.SelectContext(ctx, ds.reader(ctx), &labelIDs,
+		`SELECT label_id FROM label_membership WHERE host_id = ?`, hostID,
+	); err != nil {
+		return nil, ctxerr.Wrap(ctx, err, "get host label IDs")
+	}
+	return labelIDs, nil
+}
+
 // HostMembershipForLabels returns the set of label names (from the provided list) that the host is a member of.
 // Labels that do not exist are not included in the result. The returned map is keyed by the
 // requested label names (preserving the caller's casing), not the DB-stored names.

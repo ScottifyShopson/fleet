@@ -308,6 +308,45 @@ func testQueriesGetByName(t *testing.T, ds *Datastore) {
 	_, err = ds.QueryByName(context.Background(), &teamRocket.ID, "xxx")
 	require.Error(t, err)
 	require.True(t, fleet.IsNotFound(err))
+
+	// The label scope is loaded, as it's needed to determine whether a query is
+	// targeted at a given host when it reports results.
+	label1, err := ds.NewLabel(context.Background(), &fleet.Label{Name: "label1", Query: "SELECT 1"})
+	require.NoError(t, err)
+	label2, err := ds.NewLabel(context.Background(), &fleet.Label{Name: "label2", Query: "SELECT 2"})
+	require.NoError(t, err)
+
+	includeAnyQ, err := ds.NewQuery(context.Background(), &fleet.Query{
+		Name: "include_any", Query: "SELECT 1", AuthorID: &user.ID, Saved: true,
+		Logging:          fleet.LoggingSnapshot,
+		LabelsIncludeAny: []fleet.LabelIdent{{LabelName: label1.Name}, {LabelName: label2.Name}},
+	})
+	require.NoError(t, err)
+	includeAllQ, err := ds.NewQuery(context.Background(), &fleet.Query{
+		Name: "include_all", Query: "SELECT 1", AuthorID: &user.ID, Saved: true,
+		Logging:          fleet.LoggingSnapshot,
+		LabelsIncludeAll: []fleet.LabelIdent{{LabelName: label1.Name}},
+	})
+	require.NoError(t, err)
+
+	actual, err = ds.QueryByName(context.Background(), nil, includeAnyQ.Name)
+	require.NoError(t, err)
+	require.Empty(t, actual.LabelsIncludeAll)
+	require.ElementsMatch(t, []fleet.LabelIdent{
+		{LabelID: label1.ID, LabelName: label1.Name},
+		{LabelID: label2.ID, LabelName: label2.Name},
+	}, actual.LabelsIncludeAny)
+
+	actual, err = ds.QueryByName(context.Background(), nil, includeAllQ.Name)
+	require.NoError(t, err)
+	require.Empty(t, actual.LabelsIncludeAny)
+	require.Equal(t, []fleet.LabelIdent{{LabelID: label1.ID, LabelName: label1.Name}}, actual.LabelsIncludeAll)
+
+	// A query with no label scope has no labels loaded.
+	actual, err = ds.QueryByName(context.Background(), nil, globalQ.Name)
+	require.NoError(t, err)
+	require.Empty(t, actual.LabelsIncludeAny)
+	require.Empty(t, actual.LabelsIncludeAll)
 }
 
 func testQueriesDeleteMany(t *testing.T, ds *Datastore) {

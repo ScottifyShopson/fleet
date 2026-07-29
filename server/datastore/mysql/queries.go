@@ -243,6 +243,12 @@ func (ds *Datastore) QueryByName(
 		return nil, ctxerr.Wrap(ctx, err, "loading packs for query")
 	}
 
+	// The label scope is needed to determine whether the query is targeted at a
+	// given host (see Service.queriesScheduledForHost).
+	if err := ds.loadLabelsForQueries(ctx, []*fleet.Query{&query}); err != nil {
+		return nil, ctxerr.Wrap(ctx, err, "loading labels for query")
+	}
+
 	return &query, nil
 }
 

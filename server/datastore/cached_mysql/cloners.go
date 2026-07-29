@@ -3,6 +3,7 @@ package cached_mysql
 import (
 	"encoding/json"
 	"maps"
+	"slices"
 
 	"github.com/fleetdm/fleet/v4/server/fleet"
 )
@@ -39,6 +40,16 @@ type integer int
 
 func (i integer) Clone() (fleet.Cloner, error) {
 	return i, nil
+}
+
+// labelIDList is the list of label IDs a host is a member of.
+type labelIDList []uint
+
+func (l labelIDList) Clone() (fleet.Cloner, error) {
+	if l == nil {
+		return labelIDList(nil), nil
+	}
+	return labelIDList(slices.Clone(l)), nil
 }
 
 // fmaNameMap is a map of unique_identifier -> canonical FMA name.

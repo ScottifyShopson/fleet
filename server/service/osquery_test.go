@@ -657,6 +657,8 @@ func TestSubmitResultLogsToLogDestination(t *testing.T) {
 			return &fleet.Query{
 				ID:                 4242,
 				Name:               name,
+				Saved:              true,
+				Interval:           3600,
 				AutomationsEnabled: true,
 				TeamID:             ptr.Uint(1),
 				Logging:            fleet.LoggingSnapshot,
@@ -665,6 +667,8 @@ func TestSubmitResultLogsToLogDestination(t *testing.T) {
 			return &fleet.Query{
 				ID:                 4343,
 				Name:               name,
+				Saved:              true,
+				Interval:           3600,
 				AutomationsEnabled: true,
 				TeamID:             ptr.Uint(2),
 				Logging:            fleet.LoggingSnapshot,
@@ -673,23 +677,31 @@ func TestSubmitResultLogsToLogDestination(t *testing.T) {
 			return &fleet.Query{
 				ID:                 uint(name[0]),
 				Name:               name,
+				Saved:              true,
+				Interval:           3600,
 				AutomationsEnabled: true,
 			}, nil
 		case teamID != nil && *teamID == 1 && name == "hosts":
 			return &fleet.Query{
 				Name:               name,
+				Saved:              true,
+				Interval:           3600,
 				AutomationsEnabled: true,
 				TeamID:             teamID,
 			}, nil
 		case teamID == nil && name == "query_not_automated":
 			return &fleet.Query{
 				Name:               name,
+				Saved:              true,
+				Interval:           3600,
 				AutomationsEnabled: false,
 			}, nil
 		case teamID == nil && name == "query_should_be_saved_and_submitted":
 			return &fleet.Query{
 				ID:                 123,
 				Name:               name,
+				Saved:              true,
+				Interval:           3600,
 				AutomationsEnabled: true,
 				Logging:            fleet.LoggingSnapshot,
 			}, nil
@@ -697,6 +709,8 @@ func TestSubmitResultLogsToLogDestination(t *testing.T) {
 			return &fleet.Query{
 				ID:                 777,
 				Name:               name,
+				Saved:              true,
+				Interval:           3600,
 				AutomationsEnabled: true,
 				Logging:            fleet.LoggingSnapshot,
 			}, nil
@@ -704,6 +718,8 @@ func TestSubmitResultLogsToLogDestination(t *testing.T) {
 			return &fleet.Query{
 				ID:                 1234,
 				Name:               name,
+				Saved:              true,
+				Interval:           3600,
 				AutomationsEnabled: true,
 				Logging:            fleet.LoggingSnapshot,
 			}, nil
@@ -711,6 +727,8 @@ func TestSubmitResultLogsToLogDestination(t *testing.T) {
 			return &fleet.Query{
 				ID:                 444,
 				Name:               name,
+				Saved:              true,
+				Interval:           3600,
 				AutomationsEnabled: false,
 				Logging:            fleet.LoggingSnapshot,
 			}, nil
@@ -718,6 +736,8 @@ func TestSubmitResultLogsToLogDestination(t *testing.T) {
 			return &fleet.Query{
 				ID:                 555,
 				Name:               name,
+				Saved:              true,
+				Interval:           3600,
 				AutomationsEnabled: true,
 				Logging:            fleet.LoggingSnapshot,
 			}, nil
@@ -902,6 +922,8 @@ func TestSaveResultLogsToQueryReports(t *testing.T) {
 	discardDataTrue := map[string]*fleet.Query{
 		"pack/Global/Uptime": {
 			ID:          1,
+			Saved:       true,
+			Interval:    3600,
 			DiscardData: true,
 			Logging:     fleet.LoggingSnapshot,
 		},
@@ -913,6 +935,8 @@ func TestSaveResultLogsToQueryReports(t *testing.T) {
 	discardDataFalse := map[string]*fleet.Query{
 		"pack/Global/Uptime": {
 			ID:          1,
+			Saved:       true,
+			Interval:    3600,
 			DiscardData: false,
 			Logging:     fleet.LoggingSnapshot,
 		},
@@ -951,6 +975,8 @@ func TestSaveResultLogsToQueryReportsWithTableOverLimit(t *testing.T) {
 	discardDataFalse := map[string]*fleet.Query{
 		"pack/Global/Uptime": {
 			ID:          1,
+			Saved:       true,
+			Interval:    3600,
 			DiscardData: false,
 			Logging:     fleet.LoggingSnapshot,
 		},
@@ -994,6 +1020,8 @@ func TestSubmitResultLogsToQueryResultsWithEmptySnapShot(t *testing.T) {
 	ds.QueryByNameFunc = func(ctx context.Context, teamID *uint, name string) (*fleet.Query, error) {
 		return &fleet.Query{
 			ID:          1,
+			Saved:       true,
+			Interval:    3600,
 			DiscardData: false,
 			Logging:     fleet.LoggingSnapshot,
 		}, nil
@@ -1045,6 +1073,8 @@ func TestSubmitResultLogsToQueryResultsDoesNotCountNullDataRows(t *testing.T) {
 	ds.QueryByNameFunc = func(ctx context.Context, teamID *uint, name string) (*fleet.Query, error) {
 		return &fleet.Query{
 			ID:          1,
+			Saved:       true,
+			Interval:    3600,
 			DiscardData: false,
 			Logging:     fleet.LoggingSnapshot,
 		}, nil
@@ -1065,6 +1095,212 @@ func TestSubmitResultLogsToQueryResultsDoesNotCountNullDataRows(t *testing.T) {
 	err = svc.SubmitResultLogs(ctx, results)
 	require.NoError(t, err)
 	assert.True(t, ds.OverwriteQueryResultRowsFuncInvoked)
+}
+
+// TestSubmitResultLogsOnlyStoresQueriesScheduledForHost checks that a host
+// cannot forge rows in the report of a saved query it was never scheduled to
+// run. osquery identifies scheduled query results by name only, so the reported
+// name must be correlated with the host's schedule before storing the results.
+func TestSubmitResultLogsOnlyStoresQueriesScheduledForHost(t *testing.T) {
+	const (
+		hostID       = 999
+		hostLabelID  = 10
+		otherLabelID = 20
+	)
+
+	// The reported queries, keyed by the query name the host claims to be
+	// reporting results for.
+	queries := map[string]*fleet.Query{
+		"scheduled": {
+			ID: 1, Name: "scheduled", Saved: true, Interval: 3600,
+			Logging: fleet.LoggingSnapshot,
+		},
+		"not_scheduled": {
+			// No schedule interval: Fleet never sends this query to any host, so no
+			// host can legitimately report results for it.
+			ID: 2, Name: "not_scheduled", Saved: true, Interval: 0,
+			Logging: fleet.LoggingSnapshot,
+		},
+		"not_saved": {
+			ID: 3, Name: "not_saved", Saved: false, Interval: 3600,
+			Logging: fleet.LoggingSnapshot,
+		},
+		"other_team": {
+			ID: 4, Name: "other_team", Saved: true, Interval: 3600,
+			TeamID: new(uint(42)), Logging: fleet.LoggingSnapshot,
+		},
+		"not_delivered_to_hosts": {
+			// Neither automations nor query reports: not part of any host's schedule.
+			ID: 5, Name: "not_delivered_to_hosts", Saved: true, Interval: 3600,
+			AutomationsEnabled: false, DiscardData: true, Logging: fleet.LoggingSnapshot,
+		},
+		"include_any_in_scope": {
+			ID: 6, Name: "include_any_in_scope", Saved: true, Interval: 3600,
+			Logging: fleet.LoggingSnapshot,
+			LabelsIncludeAny: []fleet.LabelIdent{
+				{LabelID: otherLabelID, LabelName: "other"},
+				{LabelID: hostLabelID, LabelName: "host"},
+			},
+		},
+		"include_any_out_of_scope": {
+			ID: 7, Name: "include_any_out_of_scope", Saved: true, Interval: 3600,
+			Logging: fleet.LoggingSnapshot,
+			LabelsIncludeAny: []fleet.LabelIdent{
+				{LabelID: otherLabelID, LabelName: "other"},
+			},
+		},
+		"include_all_in_scope": {
+			ID: 8, Name: "include_all_in_scope", Saved: true, Interval: 3600,
+			Logging: fleet.LoggingSnapshot,
+			LabelsIncludeAll: []fleet.LabelIdent{
+				{LabelID: hostLabelID, LabelName: "host"},
+			},
+		},
+		"include_all_out_of_scope": {
+			ID: 9, Name: "include_all_out_of_scope", Saved: true, Interval: 3600,
+			Logging: fleet.LoggingSnapshot,
+			LabelsIncludeAll: []fleet.LabelIdent{
+				{LabelID: hostLabelID, LabelName: "host"},
+				{LabelID: otherLabelID, LabelName: "other"},
+			},
+		},
+	}
+
+	for _, tc := range []struct {
+		queryName string
+		stored    bool
+	}{
+		{queryName: "scheduled", stored: true},
+		{queryName: "not_scheduled", stored: false},
+		{queryName: "not_saved", stored: false},
+		{queryName: "other_team", stored: false},
+		{queryName: "not_delivered_to_hosts", stored: false},
+		{queryName: "include_any_in_scope", stored: true},
+		{queryName: "include_any_out_of_scope", stored: false},
+		{queryName: "include_all_in_scope", stored: true},
+		{queryName: "include_all_out_of_scope", stored: false},
+	} {
+		t.Run(tc.queryName, func(t *testing.T) {
+			ds := new(mock.Store)
+			svc, ctx := newTestService(t, ds, nil, nil)
+			ctx = hostctx.NewContext(ctx, &fleet.Host{ID: hostID, TeamID: nil})
+
+			ds.AppConfigFunc = func(ctx context.Context) (*fleet.AppConfig, error) {
+				return &fleet.AppConfig{}, nil
+			}
+			ds.QueryByNameFunc = func(ctx context.Context, teamID *uint, name string) (*fleet.Query, error) {
+				query, ok := queries[name]
+				if !ok || teamID != nil {
+					return nil, newNotFoundError()
+				}
+				return query, nil
+			}
+			ds.HostLabelIDsFunc = func(ctx context.Context, hid uint) ([]uint, error) {
+				require.Equal(t, uint(hostID), hid)
+				return []uint{hostLabelID}, nil
+			}
+			ds.OverwriteQueryResultRowsFunc = func(ctx context.Context, rows []*fleet.ScheduledQueryResultRow, maxQueryReportRows int) (int, error) {
+				return len(rows), nil
+			}
+
+			log := fmt.Sprintf(
+				`{"action":"snapshot","name":"pack/Global/%s","hostIdentifier":"1379f59d98f4","calendarTime":"Tue Jan 10 20:08:51 2017 UTC","unixTime":1484078931,"snapshot":[{"forged":"true"}]}`,
+				tc.queryName,
+			)
+			require.NoError(t, svc.SubmitResultLogs(ctx, []json.RawMessage{json.RawMessage(log)}))
+
+			assert.Equal(t, tc.stored, ds.OverwriteQueryResultRowsFuncInvoked)
+
+			// The host's label membership is only looked up when one of the reported
+			// queries is label-scoped, to keep this high traffic endpoint cheap.
+			query := queries[tc.queryName]
+			labelScoped := len(query.LabelsIncludeAny) > 0 || len(query.LabelsIncludeAll) > 0
+			assert.Equal(t, labelScoped, ds.HostLabelIDsFuncInvoked)
+		})
+	}
+}
+
+// TestSubmitResultLogsLabelMembershipLookupFailsClosed checks that results for a
+// label-scoped query are discarded when Fleet cannot load the host's label
+// membership, rather than being stored on the assumption they are legitimate.
+func TestSubmitResultLogsLabelMembershipLookupFailsClosed(t *testing.T) {
+	ds := new(mock.Store)
+	svc, ctx := newTestService(t, ds, nil, nil)
+	ctx = hostctx.NewContext(ctx, &fleet.Host{ID: 999})
+
+	ds.AppConfigFunc = func(ctx context.Context) (*fleet.AppConfig, error) {
+		return &fleet.AppConfig{}, nil
+	}
+	ds.QueryByNameFunc = func(ctx context.Context, teamID *uint, name string) (*fleet.Query, error) {
+		return &fleet.Query{
+			ID: 1, Name: name, Saved: true, Interval: 3600, Logging: fleet.LoggingSnapshot,
+			LabelsIncludeAny: []fleet.LabelIdent{{LabelID: 10, LabelName: "host"}},
+		}, nil
+	}
+	ds.HostLabelIDsFunc = func(ctx context.Context, hostID uint) ([]uint, error) {
+		return nil, errors.New("some error")
+	}
+	ds.OverwriteQueryResultRowsFunc = func(ctx context.Context, rows []*fleet.ScheduledQueryResultRow, maxQueryReportRows int) (int, error) {
+		return len(rows), nil
+	}
+
+	log := `{"action":"snapshot","name":"pack/Global/labeled","hostIdentifier":"1379f59d98f4","calendarTime":"Tue Jan 10 20:08:51 2017 UTC","unixTime":1484078931,"snapshot":[{"forged":"true"}]}`
+	require.NoError(t, svc.SubmitResultLogs(ctx, []json.RawMessage{json.RawMessage(log)}))
+
+	require.True(t, ds.HostLabelIDsFuncInvoked)
+	assert.False(t, ds.OverwriteQueryResultRowsFuncInvoked)
+}
+
+func TestHostInQueryLabelScope(t *testing.T) {
+	labelA := fleet.LabelIdent{LabelID: 1, LabelName: "a"}
+	labelB := fleet.LabelIdent{LabelID: 2, LabelName: "b"}
+
+	for _, tc := range []struct {
+		name         string
+		query        fleet.Query
+		hostLabelIDs []uint
+		want         bool
+	}{
+		{name: "no label scope", want: true},
+		{
+			name:  "include_any, host in one",
+			query: fleet.Query{LabelsIncludeAny: []fleet.LabelIdent{labelA, labelB}},
+			// Host is only in labelB, which is enough.
+			hostLabelIDs: []uint{2},
+			want:         true,
+		},
+		{
+			name:         "include_any, host in none",
+			query:        fleet.Query{LabelsIncludeAny: []fleet.LabelIdent{labelA, labelB}},
+			hostLabelIDs: []uint{3},
+			want:         false,
+		},
+		{
+			name:  "include_any, host has no labels",
+			query: fleet.Query{LabelsIncludeAny: []fleet.LabelIdent{labelA}},
+			want:  false,
+		},
+		{
+			name:         "include_all, host in all",
+			query:        fleet.Query{LabelsIncludeAll: []fleet.LabelIdent{labelA, labelB}},
+			hostLabelIDs: []uint{1, 2, 3},
+			want:         true,
+		},
+		{
+			name:         "include_all, host in some",
+			query:        fleet.Query{LabelsIncludeAll: []fleet.LabelIdent{labelA, labelB}},
+			hostLabelIDs: []uint{1},
+			want:         false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			hostLabels := make(map[uint]struct{}, len(tc.hostLabelIDs))
+			for _, id := range tc.hostLabelIDs {
+				hostLabels[id] = struct{}{}
+			}
+			assert.Equal(t, tc.want, hostInQueryLabelScope(&tc.query, hostLabels))
+		})
+	}
 }
 
 type failingLogger struct{}
@@ -1103,6 +1339,8 @@ func TestSubmitResultLogsFail(t *testing.T) {
 	ds.QueryByNameFunc = func(ctx context.Context, teamID *uint, name string) (*fleet.Query, error) {
 		return &fleet.Query{
 			ID:                 1,
+			Saved:              true,
+			Interval:           3600,
 			DiscardData:        false,
 			AutomationsEnabled: true,
 			Name:               name,

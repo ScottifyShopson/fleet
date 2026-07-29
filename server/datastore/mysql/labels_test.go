@@ -97,6 +97,7 @@ func TestLabels(t *testing.T) {
 		{"ListHostsInLabelIssues", testListHostsInLabelIssues},
 		{"ListHostsInLabelDiskEncryptionStatus", testListHostsInLabelDiskEncryptionStatus},
 		{"HostMembershipForLabels", testHostMembershipForLabels},
+		{"HostLabelIDs", testHostLabelIDs},
 		{"ListHostsInLabelOSSettings", testLabelsListHostsInLabelOSSettings},
 		{"AddDeleteLabelsToFromHost", testAddDeleteLabelsToFromHost},
 		{"ApplyLabelSpecSerialUUID", testApplyLabelSpecsForSerialUUID},
@@ -1962,6 +1963,39 @@ func testListHostsInLabelDiskEncryptionStatus(t *testing.T, ds *Datastore) {
 	listHostsCheckCount(t, ds, fleet.TeamFilter{User: test.UserAdmin}, fleet.HostListOptions{MacOSSettingsDiskEncryptionFilter: fleet.DiskEncryptionEnforcing}, 3)
 	listHostsCheckCount(t, ds, fleet.TeamFilter{User: test.UserAdmin}, fleet.HostListOptions{MacOSSettingsDiskEncryptionFilter: fleet.DiskEncryptionFailed}, 2)
 	listHostsCheckCount(t, ds, fleet.TeamFilter{User: test.UserAdmin}, fleet.HostListOptions{MacOSSettingsDiskEncryptionFilter: fleet.DiskEncryptionRemovingEnforcement}, 1)
+}
+
+func testHostLabelIDs(t *testing.T, ds *Datastore) {
+	ctx := t.Context()
+
+	label1, err := ds.NewLabel(ctx, &fleet.Label{Name: "label1", Query: "SELECT 1"})
+	require.NoError(t, err)
+	label2, err := ds.NewLabel(ctx, &fleet.Label{Name: "label2", Query: "SELECT 2"})
+	require.NoError(t, err)
+
+	hostInBoth := test.NewHost(t, ds, "both", "1", "both", "both", time.Now())
+	hostInOne := test.NewHost(t, ds, "one", "2", "one", "one", time.Now())
+	hostInNone := test.NewHost(t, ds, "none", "3", "none", "none", time.Now())
+
+	require.NoError(t, ds.AddLabelsToHost(ctx, hostInBoth.ID, []uint{label1.ID, label2.ID}))
+	require.NoError(t, ds.AddLabelsToHost(ctx, hostInOne.ID, []uint{label2.ID}))
+
+	labelIDs, err := ds.HostLabelIDs(ctx, hostInBoth.ID)
+	require.NoError(t, err)
+	require.ElementsMatch(t, []uint{label1.ID, label2.ID}, labelIDs)
+
+	labelIDs, err = ds.HostLabelIDs(ctx, hostInOne.ID)
+	require.NoError(t, err)
+	require.Equal(t, []uint{label2.ID}, labelIDs)
+
+	labelIDs, err = ds.HostLabelIDs(ctx, hostInNone.ID)
+	require.NoError(t, err)
+	require.Empty(t, labelIDs)
+
+	// Unknown host, no error.
+	labelIDs, err = ds.HostLabelIDs(ctx, hostInNone.ID+1000)
+	require.NoError(t, err)
+	require.Empty(t, labelIDs)
 }
 
 func testHostMembershipForLabels(t *testing.T, ds *Datastore) {

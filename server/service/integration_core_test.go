@@ -14293,6 +14293,116 @@ func (s *integrationTestSuite) TestQueryReports() {
 	// TODO: Set global discard flag and verify that all data is gone.
 }
 
+// TestQueryReportsRejectResultsNotScheduledForHost checks that an enrolled host
+// cannot forge rows in the report of a saved query it was never scheduled to
+// run, by submitting result logs that reference the query by name.
+func (s *integrationTestSuite) TestQueryReportsRejectResultsNotScheduledForHost() {
+	t := s.T()
+	ctx := context.Background()
+
+	counts := make(map[uint]int)
+	s.lq.GetQueryResultsCountsOverride = func(queryIDs []uint) (map[uint]int, error) {
+		return counts, nil
+	}
+	s.lq.IncrQueryResultsCountsOverride = func(queryIDsToAmounts map[uint]int) error {
+		for queryID, amount := range queryIDsToAmounts {
+			counts[queryID] += amount
+		}
+		return nil
+	}
+	defer func() {
+		s.lq.GetQueryResultsCountsOverride = nil
+		s.lq.IncrQueryResultsCountsOverride = nil
+	}()
+
+	host, err := s.ds.NewHost(ctx, &fleet.Host{
+		DetailUpdatedAt: time.Now(),
+		LabelUpdatedAt:  time.Now(),
+		PolicyUpdatedAt: time.Now(),
+		SeenTime:        time.Now(),
+		NodeKey:         new("forge-1"),
+		UUID:            "forge-1",
+		Hostname:        "forge.local",
+		OsqueryHostID:   new("forge-1"),
+		Platform:        "darwin",
+	})
+	require.NoError(t, err)
+
+	// A global report with no schedule and automations disabled: Fleet never sends
+	// it to any host, so no host can legitimately report results for it.
+	unscheduled, err := s.ds.NewQuery(ctx, &fleet.Query{
+		Name:               "Unscheduled report",
+		Query:              "SELECT 1;",
+		Saved:              true,
+		Interval:           0,
+		AutomationsEnabled: false,
+		DiscardData:        false,
+		Logging:            fleet.LoggingSnapshot,
+	})
+	require.NoError(t, err)
+
+	// A global report scoped to a label the host is not a member of.
+	label, err := s.ds.NewLabel(ctx, &fleet.Label{Name: t.Name() + "-label", Query: "SELECT 1"})
+	require.NoError(t, err)
+	labelScoped, err := s.ds.NewQuery(ctx, &fleet.Query{
+		Name:               "Label scoped report",
+		Query:              "SELECT 1;",
+		Saved:              true,
+		Interval:           60,
+		AutomationsEnabled: false,
+		DiscardData:        false,
+		Logging:            fleet.LoggingSnapshot,
+		LabelsIncludeAny:   []fleet.LabelIdent{{LabelName: label.Name}},
+	})
+	require.NoError(t, err)
+
+	forgeResults := func(queryName string) {
+		slreq := submitLogsRequest{
+			NodeKey: *host.NodeKey,
+			LogType: "result",
+			Data: []json.RawMessage{json.RawMessage(`{
+  "snapshot": [{"forged": "true", "value": "tampered-row"}],
+  "action": "snapshot",
+  "name": "pack/Global/` + queryName + `",
+  "hostIdentifier": "` + *host.OsqueryHostID + `",
+  "calendarTime": "Fri Oct  6 17:32:08 2023 UTC",
+  "unixTime": 1696613528
+}`)},
+		}
+		slres := submitLogsResponse{}
+		s.DoJSON("POST", "/api/osquery/log", slreq, http.StatusOK, &slres)
+		require.NoError(t, slres.Err)
+	}
+
+	reportRows := func(queryID uint) int {
+		var gqrr fleet.GetQueryReportResponse
+		s.DoJSON("GET", fmt.Sprintf("/api/latest/fleet/queries/%d/report", queryID), fleet.GetQueryReportRequest{}, http.StatusOK, &gqrr)
+		require.NoError(t, gqrr.Err)
+		return len(gqrr.Results)
+	}
+
+	// Neither forged submission is persisted, and the report row counters are
+	// left untouched.
+	forgeResults(unscheduled.Name)
+	forgeResults(labelScoped.Name)
+	require.Zero(t, reportRows(unscheduled.ID))
+	require.Zero(t, reportRows(labelScoped.ID))
+	require.Empty(t, counts)
+
+	// Put both queries in the host's schedule: the same submissions are now
+	// accepted, which confirms the schedule correlation is what rejected them
+	// above.
+	unscheduled.Interval = 60
+	require.NoError(t, s.ds.SaveQuery(ctx, unscheduled, false, false))
+	require.NoError(t, s.ds.AddLabelsToHost(ctx, host.ID, []uint{label.ID}))
+
+	forgeResults(unscheduled.Name)
+	forgeResults(labelScoped.Name)
+	require.Equal(t, 1, reportRows(unscheduled.ID))
+	require.Equal(t, 1, reportRows(labelScoped.ID))
+	require.Equal(t, map[uint]int{unscheduled.ID: 1, labelScoped.ID: 1}, counts)
+}
+
 // Creates a set of results for use in tests for Query Results.
 func results(num int, hostID string) string {
 	b := strings.Builder{}
