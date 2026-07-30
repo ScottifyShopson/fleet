@@ -1,6 +1,9 @@
 name: fleet
 type: go
 
+minimum_dependency_age:
+  enforce: false
+
 up:
   - go: 1.26.5
   - node:
