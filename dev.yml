@@ -1,0 +1,13 @@
+name: fleet
+type: go
+
+up:
+  - go: 1.26.5
+
+commands:
+  style:
+    desc: Run Go linters
+    run: make lint-go
+  test:
+    desc: Run Go tests
+    run: make test-go
