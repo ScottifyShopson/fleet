@@ -3,6 +3,10 @@ type: go
 
 up:
   - go: 1.26.5
+  - node:
+      version: v24.10.0
+      yarn: v1.22.22
+  - podman
 
 commands:
   style:
